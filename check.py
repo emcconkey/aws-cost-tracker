@@ -3,6 +3,7 @@ import sqlite3
 import sys
 import datetime
 from dateutil.parser import parse
+import boto3
 
 DBFILE = 'costdata.sqlite'
 
@@ -63,16 +64,22 @@ def show_day(day):
 	total = 0.00
 	account_total = 0.00
 	last_account = ""
+	first = True
 	for r in records:
 		if r[2] != last_account:
 			last_account = r[2]
-			out += '{0:40s}: $ {1:8.2f}\n'.format('Subtotal', account_total)
-			out += '-------------------------------------------\nAccount: {0:s}\n'.format(last_account)
+			account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get('Name')
+			if not first:
+				out += '{0:40s}: $ {1:8.2f}\n'.format('Subtotal', account_total)
+			out += '-------------------------------------------\nAccount: {0:s}\n'.format(account_name)
+			first = False
 			account_total = 0.00
 		total += r[4]
 		account_total += r[4]
-		out += '{0:40s}: $ {1:8.2f}\n'.format(r[3], r[4])
+		if r[4] > 0:
+			out += '{0:40s}: $ {1:8.2f}\n'.format(r[3], r[4])
 
+	out += '{0:40s}: $ {1:8.2f}\n'.format('Subtotal', account_total)
 	out += "----------------------------------------------------\n"
 	out += '{0:40s}: $ {1:8.2f}\n'.format('Total', total)
 	return out
@@ -98,6 +105,40 @@ def show_month(start):
 	return out
 
 
+def show_mtd_detail(start):
+	end = parse(start)
+	month = end.month + 1
+	end = end.replace(month=month).strftime("%Y-%m-%d")
+
+	records = query_db("select *,sum(cost) as sc from tracking where date>=? and date<? group by account, product", (start, end))
+
+	d = records[0][1]
+	out = "Month to date AWS costs by account\n"
+	out += "====================================================\n"
+	total = 0.00
+	account_total = 0.00
+	last_account = ""
+	account_name = ""
+	first = True
+	for r in records:
+		if r[2] != last_account:
+			if not first:
+				out += '{0:40s}: $ {1:8.2f}\n'.format(account_name, account_total)
+			first = False
+			account_total = 0.00
+			last_account = r[2]
+			account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get(
+				'Name')
+			out += '-------------------------------------------\nAccount: {0:s}\n'.format(account_name)
+		total += r[5]
+		account_total += r[5]
+		out += '{0:40s}: $ {1:8.2f}\n'.format(r[3], r[5])
+
+	out += "----------------------------------------------------\n"
+	out += '{0:40s}: $ {1:8.2f}\n'.format('Total', total)
+	return out
+
+
 def show_mtd_product(start):
 	end = parse(start)
 	month = end.month + 1
@@ -106,23 +147,26 @@ def show_mtd_product(start):
 	records = query_db("select *,sum(cost) as sc from tracking where date>=? and date<? group by account, product", (start, end))
 
 	d = records[0][1]
-	out = d + "Month to date AWS costs by account\n"
+	out = "Month to date AWS costs by account\n"
 	out += "====================================================\n"
 	total = 0.00
 	account_total = 0.00
 	last_account = ""
+	account_name = ""
 	first = True
 	for r in records:
 		if r[2] != last_account:
-			last_account = r[2]
 			if not first:
-				out += '{0:40s}: $ {1:8.2f}\n'.format('Subtotal', account_total)
-				out += '-------------------------------------------\nAccount: {0:s}\n'.format(last_account)
+				out += '{0:40s}: $ {1:8.2f}\n'.format(account_name, account_total)
 			first = False
 			account_total = 0.00
+			last_account = r[2]
+			account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get(
+				'Name')
+			#out += '-------------------------------------------\nAccount: {0:s}\n'.format(account_name)
 		total += r[5]
 		account_total += r[5]
-		out += '{0:40s}: $ {1:8.2f}\n'.format(r[3], r[5])
+		#out += '{0:40s}: $ {1:8.2f}\n'.format(r[3], r[5])
 
 	out += "----------------------------------------------------\n"
 	out += '{0:40s}: $ {1:8.2f}\n'.format('Total', total)
@@ -147,6 +191,12 @@ def main(argv):
 			print(show_mtd_product(parse(argv[1]).replace(day=1).strftime('%Y-%m-%d')))
 		else:
 			print(show_mtd_product(datetime.date.today().replace(day=1).strftime('%Y-%m-%d')))
+		return
+	if argv[0] == "mdetail":
+		if len(argv) > 1:
+			print(show_mtd_detail(parse(argv[1]).replace(day=1).strftime('%Y-%m-%d')))
+		else:
+			print(show_mtd_detail(datetime.date.today().replace(day=1).strftime('%Y-%m-%d')))
 		return
 	if argv[0] == "average":
 		if len(argv) < 3:
