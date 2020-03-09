@@ -2,9 +2,12 @@
 import fileinput
 from io import StringIO
 import datetime
+from backports.datetime_fromisoformat import MonkeyPatch
 import csv
 import sqlite3
 import boto3
+
+MonkeyPatch.patch_fromisoformat()
 
 AWS_REGION = "us-east-1"
 AWS_COST_EXPLORER_SERVICE_KEY = "ce"
