@@ -142,7 +142,13 @@ def show_mtd_detail(start):
 def show_mtd_product(start):
 	end = parse(start)
 	month = end.month + 1
-	end = end.replace(month=month).strftime("%Y-%m-%d")
+	if month == 13:
+		month = 1
+		year = end.year + 1
+		end = end.replace(month=month)
+		end = end.replace(year=year).strftime("%Y-%m-%d")
+	else:
+		end = end.replace(month=month).strftime("%Y-%m-%d")
 
 	records = query_db("select *,sum(cost) as sc from tracking where date>=? and date<? group by account, product", (start, end))
 
