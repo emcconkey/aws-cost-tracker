@@ -137,8 +137,9 @@ def account_alert_average(threshold):
 				# print('{0:20s}: {1:8.0f}%\n'.format('Acceptable Threshold', percent_change))
 				pass
 			else:
-				print('Account: {0:20s}'.format(x[0]))
-				print('{0:20s}: ${1:8.2f}\n{2:20s}: ${3:8.2f}'.format('Average',average_cost, 'Yesterday',yesterday_cost))
+				account_name = boto3.client('organizations').describe_account(AccountId=x[0]).get('Account').get('Name')
+				print('Account: {0:20s}'.format(account_name))
+				print('{0:20s}: ${1:8.2f}\n{2:20s}: ${3:8.2f}'.format('7 Day Average',average_cost, 'Yesterday',yesterday_cost))
 				print('{0:20s}:  {1:8.0f}%\n'.format('Percent Change', percent_change))
 	print('==================================')
 	return
@@ -181,8 +182,7 @@ def show_day(day):					#Prints costs of a given day by account
 		if r[2] != last_account:	
 			last_account = r[2]		#Use last_account to ensure the account number isn't printed multiple times
 			#||Read through and try to figure out how this line works||
-			#account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get('Name')
-			account_name = last_account	#||Used to patch my ability to actually run this program I think||
+			account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get('Name')
 			#Checks if this is the first account listed, if it isn't add subtotal to previous account statement
 			if not first:				
 				out += '{0:40s}: $ {1:8.2f}\n'.format('Subtotal', account_total)
@@ -247,8 +247,7 @@ def show_mtd_detail(start):
 			first = False
 			account_total = 0.00
 			last_account = r[2]
-			#account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get(	'Name')
-			account_name = last_account
+			account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get(	'Name')
 			out += '-------------------------------------------\nAccount: {0:s}\n'.format(account_name)
 		total += r[5]
 		account_total += r[5]
@@ -281,8 +280,7 @@ def show_mtd_product(start):
 			first = False
 			account_total = 0.00
 			last_account = r[2]
-			#account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get('Name')
-			account_name = last_account
+			account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get('Name')
 			#out += '-------------------------------------------\nAccount: {0:s}\n'.format(account_name)
 		total += r[5]
 		account_total += r[5]
@@ -326,6 +324,7 @@ def main(argv):
 		return
 	if argv[0] == "alert":
 		if argv[1] == "average":
+			print("Checking for accounts that have a daily cost average change of {0:s}% or more.\n".format(argv[2]))
 			alert_average(argv[2])
 			return
 	if argv[0] == "alert":
