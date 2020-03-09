@@ -8,12 +8,12 @@ import boto3
 DBFILE = 'costdata.sqlite'
 
 
-def query_db(query, data):
-	db = sqlite3.connect(DBFILE)
-	dbc = db.cursor()
-	dbc.execute(query, data)
-	records = dbc.fetchall()
-	return records
+def query_db(query, data):			#Retrieves data from db based on input query and data(date)
+	db = sqlite3.connect(DBFILE)	#Sets up db as connection to the sql database
+	dbc = db.cursor()				#Sets up dbc as the cursor to the database to step through
+	dbc.execute(query, data)		#Executes query and obtains data specified from db
+	records = dbc.fetchall()		#Gets all data in the db for the input date data
+	return records					#Returns retrieved data
 
 
 def daily_average(start, count):
@@ -30,13 +30,123 @@ def daily_average(start, count):
 	return average
 
 
+#No errors, can use as reference
+def account_daily_average(start, count):
+	end = (parse(start) + datetime.timedelta(days=int(count))).strftime("%Y-%m-%d")
+	records = query_db("select * from tracking where date>=? and date<? order by account", (start, end))
+	index = -1
+	last_account = ""
+	accounts = []
+	for r in records:						#Iterate through all records
+		if r[2] != last_account:				#Check if account changed
+			index += 1								#Increment index due to changed account number
+			last_account = r[2]						#Update last_account to new value
+			accounts.append([None] * 3)				#Create new empty entry in accounts
+			accounts[index][0] = last_account		#Set new entry's account number
+			accounts[index][1] = 0.0				#Change NoneType to float
+		accounts[index][1] += r[4]				#Add cost to account
+	for x in accounts:						#Step through every account
+		x[1] = (x[1] / count)					#Change total cost to average cost
+	return accounts
+
+
+def get_account_day_cost(day, accounts):
+	records = query_db("select * from tracking where date=? order by account", (day,))
+	last_account = ""
+	index = -1
+	first = True
+	for r in records:
+		if r[2] != last_account:					#Check if account changed
+			first = True								#Mark that this is the first entry for this account
+			index += 1									#Increment the index
+			last_account = r[2]							#Update to new account number
+
+		if accounts[index][0] == last_account:		#Check if current index account is the same as current records entry
+			if first == True:							#Is this the first time with this account?
+				first = False							#Trip first flag
+				accounts[index][2] = 0.0				#Set NoneType to float
+			accounts[index][2] += r[4]				#Add record's cost to account's cost
+		else:
+			if int(accounts[index][0]) < int(last_account):		#Check if last_account passed this account number
+				index += 1											#Index to next accounts entry
+	return accounts
+
+
 def alert_average(threshold):
+	#Need to cast to float as its read in as a string
+	threshold = float(threshold)
+	#Sets start date to 8 days ago
 	start = (datetime.date.today() - datetime.timedelta(days=8)).strftime("%Y-%m-%d")
+	yesterday = (datetime.date.today() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 	count = 7
+	#Call daily_average with the starting date 8 days ago and the count of 7 days it will go through
 	avg = daily_average(start, count)
-	today = get_day_cost(datetime.date.today().strftime("%Y-%m-%d"))
-	print("Average: ", avg, " Today: ", today)
+	#Get the cost of today
+	yesterday_cost = get_day_cost(yesterday)
+
+	avg = round(avg, 2)
+	yesterday_cost = round(yesterday_cost, 2)
+
+	#Calculate the percent change between the past week avg and yesterday_cost
+	if abs(avg) > 0.00:
+		percent_change = ((yesterday_cost / avg) - 1) * 100
+	else:
+		percent_change = 0.00
+	#||If acceptable threshold will be printed move the avg/yesterday print line up here||
+	#Check if the change is within the threshold
+	if percent_change < threshold:
+		# print('{0:20s}: {1:8.0f}%\n'.format('Acceptable Threshold', percent_change))
+		pass
+	else:
+		#Print the past weeks average and yesterdays costs
+		print('=======Daily Average Alert=======\n')
+		print('{0:20s}: $ {1:8.2f}\n{2:20s}: $ {3:8.2f}'.format('Average', avg, 'Yesterday', yesterday_cost))
+		print('{0:20s}: {1:8.0f}%\n'.format('Percent Change', percent_change))
+		print('=================================\n')
+	
+	account_alert_average(threshold)
 	return
+
+
+def account_alert_average(threshold):
+	threshold = float(threshold)
+	start = (datetime.date.today() - datetime.timedelta(days=8)).strftime("%Y-%m-%d") 
+	yesterday = (datetime.date.today() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+	count = 7
+	#Set up empty list to hold the account info
+	accounts = []
+	#[]:Index of accounts
+	#[][]:0:Account ID, 1:Total->Avg Cost over past week, 2:Yesterday's cost
+	accounts = account_daily_average(start,count)
+	accounts = get_account_day_cost(yesterday, accounts)
+
+	print('==========Account Alerts==========\n')
+	for x in accounts:
+		if x[2] != None:					#Doesn't have a cost for yesterday, pass on print
+			average_cost = round(x[1], 2)
+			yesterday_cost = round(x[2], 2)
+			#Check if the change in costs is a significant value to report
+			if abs(average_cost) > 0.00 and abs(average_cost - yesterday_cost) > 10.0:
+				percent_change = (((yesterday_cost/average_cost) - 1) * 100)
+			else:
+				percent_change = 0
+			#||Change the alert tree prints if this branch will be used||
+			if abs(percent_change) < threshold:
+				# print('Account: {0:12s}'.format(x[0]))
+				# print('{0:20s}: {1:f}\n{2:20s}: {3:f}'.format('Average',average_cost, 'Yesterday',yesterday_cost))
+				# print('{0:20s}: {1:8.0f}%\n'.format('Acceptable Threshold', percent_change))
+				pass
+			else:
+				account_name = boto3.client('organizations').describe_account(AccountId=x[0]).get('Account').get('Name')
+				print('Account: {0:20s}'.format(account_name))
+				print('{0:20s}: ${1:8.2f}\n{2:20s}: ${3:8.2f}'.format('7 Day Average',average_cost, 'Yesterday',yesterday_cost))
+				print('{0:20s}:  {1:8.0f}%\n'.format('Percent Change', percent_change))
+	print('==================================')
+	return
+
+
+
+
 
 
 def get_day_cost(day):
@@ -56,29 +166,39 @@ def show_average(start, count):
 	return out
 
 
-def show_day(day):
+def show_day(day):					#Prints costs of a given day by account
+	#Stores given dates data in records
+	#Retrieves records based on date, ordered by account number and product, ||Find out what (day,) does||
 	records = query_db("select * from tracking where date=? order by account, product", (day,))
-	d = records[0][1]
-	out = d + " AWS Costs\n"
-	out += "====================================================\n"
+	d = records[0][1]				#Sets d to the date from daily_costs table
+	out = d + " AWS Costs\n"		#Sets out to the date followed by AWS Costs
+	out += "====================================================\n"	#Adds a line spacer to out
 	total = 0.00
 	account_total = 0.00
 	last_account = ""
 	first = True
-	for r in records:
-		if r[2] != last_account:
-			last_account = r[2]
+	#r is used to hold tracking table
+	for r in records:				#
+		if r[2] != last_account:	
+			last_account = r[2]		#Use last_account to ensure the account number isn't printed multiple times
+			#||Read through and try to figure out how this line works||
 			account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get('Name')
-			if not first:
+			#Checks if this is the first account listed, if it isn't add subtotal to previous account statement
+			if not first:				
 				out += '{0:40s}: $ {1:8.2f}\n'.format('Subtotal', account_total)
+			#Adds initial spacer line and the account number
 			out += '-------------------------------------------\nAccount: {0:s}\n'.format(account_name)
-			first = False
-			account_total = 0.00
+			first = False			#Trip first account flag
+			account_total = 0.00	#Reset account total for the new account
+		#Increase total and account_total by cost in current entry
 		total += r[4]
 		account_total += r[4]
+		#Only add entry to out if total is >0
 		if r[4] > 0:
+			#Add a line with the product and it's associated cost
 			out += '{0:40s}: $ {1:8.2f}\n'.format(r[3], r[4])
 
+	#Prints the final accounts subtotal line followed by the day's total cost
 	out += '{0:40s}: $ {1:8.2f}\n'.format('Subtotal', account_total)
 	out += "----------------------------------------------------\n"
 	out += '{0:40s}: $ {1:8.2f}\n'.format('Total', total)
@@ -127,8 +247,7 @@ def show_mtd_detail(start):
 			first = False
 			account_total = 0.00
 			last_account = r[2]
-			account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get(
-				'Name')
+			account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get(	'Name')
 			out += '-------------------------------------------\nAccount: {0:s}\n'.format(account_name)
 		total += r[5]
 		account_total += r[5]
@@ -167,8 +286,7 @@ def show_mtd_product(start):
 			first = False
 			account_total = 0.00
 			last_account = r[2]
-			account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get(
-				'Name')
+			account_name = boto3.client('organizations').describe_account(AccountId=last_account).get('Account').get('Name')
 			#out += '-------------------------------------------\nAccount: {0:s}\n'.format(account_name)
 		total += r[5]
 		account_total += r[5]
@@ -212,7 +330,12 @@ def main(argv):
 		return
 	if argv[0] == "alert":
 		if argv[1] == "average":
+			print("Checking for accounts that have a daily cost average change of {0:s}% or more.\n".format(argv[2]))
 			alert_average(argv[2])
+			return
+	if argv[0] == "alert":
+		if argv[1] == "acnt_average":
+			account_alert_average(argv[2])
 			return
 
 	print("Unknown command.")
